@@ -332,7 +332,7 @@ class SIReader(object):
             for port in scan_ports:
                 try:
                     self._connect_reader(port)
-                    #return
+                    return
                 except (SIReaderException, SIReaderTimeout) as msg:
                     errors = '%sport: %s: %s\n' % (errors, port, msg)
                     pass
@@ -347,7 +347,8 @@ class SIReader(object):
         elif sys.platform == 'win32':
             for i in range(256):
                 try:
-                    s = Serial(i)
+                    com_port = "COM{:d}".format(i)
+                    s = Serial(com_port)
                     found.append(s.portstr)
                     s.close()
                 except SerialException:
