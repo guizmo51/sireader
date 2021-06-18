@@ -39,6 +39,8 @@ from datetime import datetime, timedelta
 from binascii import hexlify
 import os, re, sys
 
+deep_debug = False
+
 class SIReader(object):
     """Base protocol functions and constants to interact with SI Stations.
        This class has a lot of Constants defined that are not (yet) used.
@@ -273,6 +275,22 @@ class SIReader(object):
                                  'PTL': 3,
                                  'BC' : 2,
                              },
+                          'pCard':{'CN2': 25,
+                                 'CN1': 26,
+                                 'CN0': 27,
+                                 'ST' : 14,
+                                 'FT' : 18,
+                                 'CT' : 10,
+                                 'LT' : None,
+                                 'RC' : 22,
+                                 'P1' : 176,
+                                 'PL' : 4,
+                                 'PM' : 20,
+                                 'CN' : 1,
+                                 'PTH': 2,
+                                 'PTL': 3,
+                                 'BC' : 2,
+                             },
                           'SI10':{'CN2': 25,     # Same data structure for SI11
                                   'CN1': 26,
                                   'CN0': 27,
@@ -348,9 +366,11 @@ class SIReader(object):
             for i in range(256):
                 try:
                     com_port = "COM{:d}".format(i)
+                    #print ("Trying {}".format(com_port))
                     s = Serial(com_port)
                     found.append(s.portstr)
                     s.close()
+                    #print ("{} appears ok".format(com_port))
                 except SerialException:
                     pass
         else:
@@ -751,6 +771,17 @@ class SIReader(object):
             list.append((station, time))
 
     @staticmethod
+    def _print_bytes(label, offset, byte_string):
+      if deep_debug:
+        #print("Raw data is {} bytes long:\n".format(len(byte_string)))
+        data_array = []
+        for byte in range(len(byte_string)):
+          data_array.append("{:d}:{:x}".format(byte, SIReader._to_int(byte_string[byte:byte+1])))
+          #print("{:02x},".format(SIReader._to_int(raw_data[byte:byte+1])))
+        print(label + " ({} @ {}) : ".format(len(byte_string), offset) + ",".join(data_array))
+        #print("\n\n")
+
+    @staticmethod
     def _decode_carddata(data, card_type, reftime = None):
         """Decodes a data record read from an SI Card."""
 
@@ -759,14 +790,20 @@ class SIReader(object):
         
         # the slicing of data is necessary for Python 3 to get a bytes object instead
         # of an int
+        SIReader._print_bytes("card #", card['CN2'], data[card['CN2']:card['CN2']+1]
+                                                     + data[card['CN1']:card['CN1']+1]
+                                                     + data[card['CN0']:card['CN0']+1])
         ret['card_number'] = SIReader._decode_cardnr(b'\x00'
                                                      + data[card['CN2']:card['CN2']+1]
                                                      + data[card['CN1']:card['CN1']+1]
                                                      + data[card['CN0']:card['CN0']+1])
+        SIReader._print_bytes("start", card['ST'], data[card['ST']:card['ST']+2])
         ret['start'] = SIReader._decode_time(data[card['ST']:card['ST']+2],
                                              reftime)
+        SIReader._print_bytes("finish", card['FT'], data[card['FT']:card['FT']+2])
         ret['finish'] = SIReader._decode_time(data[card['FT']:card['FT']+2],
                                              reftime)
+        SIReader._print_bytes("check", card['CT'], data[card['CT']:card['CT']+2])
         ret['check'] = SIReader._decode_time(data[card['CT']:card['CT']+2],
                                              reftime)
         if card['LT'] is not None:
@@ -775,6 +812,7 @@ class SIReader(object):
         else:
             ret['clear'] = None # SI 5 and 9 cards don't store the clear time
 
+        SIReader._print_bytes("punch count", card['RC'], data[card['RC']:card['RC']+1])
         punch_count = byte2int(data[card['RC']:card['RC']+1])
         if card_type == 'SI5':
             # RC is the index of the next punch on SI5
@@ -786,10 +824,12 @@ class SIReader(object):
         ret['punches'] = []
         p = 0
         i = card['P1']
+        #SIReader._print_bytes("first punch", data[card['P1']:card['P1']+1])
         while p < punch_count:
             if card_type == 'SI5' and i % 16 == 0:
                 # first byte of each block is reserved for punches 31-36
                 i += 1
+            SIReader._print_bytes("punch {}".format(p), card['CN'] + i, data[i + card['CN']:i+card['CN']+1])
 
             SIReader._append_punch(ret['punches'],
                                    byte2int(data[i + card['CN']]),
@@ -925,12 +965,13 @@ class SIReaderReadout(SIReader):
             raw_data += self._read_command()[1][1:]
             raw_data += self._read_command()[1][1:]
             return SIReader._decode_carddata(raw_data, self.cardtype)
-        elif self.cardtype in ('SI8', 'SI9'):
+        elif self.cardtype in ('SI8', 'SI9', 'pCard'):
             raw_data = b''
             for b in range(SIReader.CARD[self.cardtype]['BC']):
                 raw_data += self._send_command(SIReader.C_GET_SI9,
                                                int2byte(b))[1][1:]
-
+            self._print_bytes("raw data", 0, raw_data)
+		
             return SIReader._decode_carddata(raw_data, self.cardtype)
         elif self.cardtype == 'SI10':
             # Reading out SI10 cards block by block proved to be unreliable and slow
@@ -981,10 +1022,14 @@ class SIReaderReadout(SIReader):
                 self.cardtype = 'SI8'
             elif self.sicard >= 1000000 and self.sicard <= 1999999:
                 self.cardtype = 'SI9'
+            elif self.sicard >= 4000000 and self.sicard <= 4999999:  # pCard
+                self.cardtype = 'pCard'
+#            elif self.sicard >= 6000000 and self.sicard <= 6999999:  # tCard
+#                self.cardtype = 'SI9'
             elif self.sicard >= 7000000 and self.sicard <= 9999999:
                 self.cardtype = 'SI10'
             else:
-                raise SIReaderException('Unknown cardtype!')
+                raise SIReaderException('Unknown cardtype: {}'.format(self.sicard))
             raise SIReaderCardChanged("SI-Card inserted during command.")
 
         return (cmd, data)
