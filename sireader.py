@@ -639,11 +639,18 @@ class SIReader(object):
         a reimplementation of the Java function in the SI Programmers
         manual examples."""
 
+        #print (f"Compute checksum of {s}.")
+
         def twochars(s):
             """generator that split a string into parts of two chars"""
             if len(s) == 0:
                 # immediately stop on empty string
-                raise StopIteration
+                # I don't know why, but raising the StopIteration caused
+                # problems when I moved this code to Python3, though it worked
+                # fine with Python2.  Making this a return seems to have solved
+                # things, at least for Python3
+                return
+                #raise StopIteration
             
             # add 0 to the string and make it even length
             if len(s)%2 == 0:
